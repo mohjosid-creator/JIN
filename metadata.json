@@ -1,0 +1,6 @@
+{
+  "name": "JIN Intelligent Network Agent v2.0",
+  "description": "JIN v2.0 Enterprise - Sistem AI Intelligent Network Agent untuk Mas Joe dengan 3D Three.js holographic avatar, real-time streaming Q&A, integrasi WhatsApp Business & Meta Cloud API, Node.js orchestrator, dan Python worker analyzer.py.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
