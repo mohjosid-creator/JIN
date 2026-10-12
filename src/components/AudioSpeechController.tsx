@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Mic, MicOff, Volume2, VolumeX, Sparkles } from 'lucide-react';
+import { Mic, MicOff, Volume2, VolumeX, Sparkles, Send, Zap } from 'lucide-react';
 
 interface AudioSpeechControllerProps {
   onTranscriptReceived: (transcript: string) => void;
@@ -13,6 +13,8 @@ interface AudioSpeechControllerProps {
   textToSpeak?: string;
   onSpeechEnd?: () => void;
   disabled?: boolean;
+  speechRate?: number;
+  onStopSpeaking?: () => void;
 }
 
 export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
@@ -22,6 +24,8 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
   textToSpeak,
   onSpeechEnd,
   disabled = false,
+  speechRate = 1.1,
+  onStopSpeaking,
 }) => {
   const [isListening, setIsListening] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
@@ -29,8 +33,14 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
   const [interimTranscript, setInterimTranscript] = useState('');
   const recognitionRef = useRef<any>(null);
   const audioAnimationRef = useRef<number | null>(null);
+  const silenceTimerRef = useRef<any>(null);
+  const lastSpokenTextRef = useRef<string>('');
 
-  // Check Web Speech API support
+  // Queue for Progressive Streaming Audio Playback
+  const speechQueueRef = useRef<string[]>([]);
+  const isPlayingRef = useRef<boolean>(false);
+
+  // Setup Web Speech Recognition
   useEffect(() => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -59,102 +69,188 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
           }
         }
 
+        const candidateText = (final || interim).trim();
+
         if (interim) {
           setInterimTranscript(interim);
+          // Auto-dispatch on silence detection (700ms pause)
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = setTimeout(() => {
+            if (candidateText && candidateText.length >= 2) {
+              try {
+                recognition.stop();
+              } catch {}
+              setIsListening(false);
+              setInterimTranscript('');
+              onTranscriptReceived(candidateText);
+            }
+          }, 700);
         }
 
         if (final) {
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           setInterimTranscript('');
           setIsListening(false);
-          onTranscriptReceived(final);
+          onTranscriptReceived(final.trim());
         }
       };
 
       recognition.onerror = (event: any) => {
-        console.warn('Speech recognition status:', event.error);
+        console.warn('Speech recognition warning:', event.error);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         setIsListening(false);
         setInterimTranscript('');
       };
 
       recognition.onend = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         setIsListening(false);
         setInterimTranscript('');
       };
 
       recognitionRef.current = recognition;
     }
+
+    return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
   }, [onTranscriptReceived]);
 
-  // Handle Text-to-Speech (TTS)
-  useEffect(() => {
-    if (!textToSpeak || !ttsEnabled || !window.speechSynthesis) return;
-
-    window.speechSynthesis.cancel();
-
-    // Clean markdown and code symbols for cleaner TTS vocalization
-    const cleanedText = textToSpeak
+  // Clean and sanitize text for Indonesian TTS
+  const cleanTtsText = (raw: string): string => {
+    return raw
       .replace(/[*_#`[\]()]/g, '')
       .replace(/https?:\/\/\S+/g, '')
-      .slice(0, 320); // reasonable sentence length
+      .replace(/\[.*?\]/g, '')
+      .replace(/[\n\r]+/g, ' ')
+      .trim();
+  };
 
-    const utterance = new SpeechSynthesisUtterance(cleanedText);
-    utterance.lang = 'id-ID';
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-
-    // Pick best available voice if exists
-    const voices = window.speechSynthesis.getVoices();
-    const indonesianVoice = voices.find((v) => v.lang.startsWith('id') || v.name.includes('Indonesia'));
-    if (indonesianVoice) {
-      utterance.voice = indonesianVoice;
-    }
-
-    // Audio level oscillation simulation during speech
+  // Play audio level wave animation
+  const startAudioOscillation = () => {
+    if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
     let startTime = Date.now();
     const updateAudioLevel = () => {
-      if (window.speechSynthesis.speaking) {
+      if (window.speechSynthesis && window.speechSynthesis.speaking) {
         const elapsed = (Date.now() - startTime) / 1000;
-        const level = 0.25 + Math.abs(Math.sin(elapsed * 12)) * 0.45 + (Math.random() * 0.15);
+        const level = 0.28 + Math.abs(Math.sin(elapsed * 14)) * 0.48 + Math.random() * 0.15;
         onAudioLevelChange(level);
         audioAnimationRef.current = requestAnimationFrame(updateAudioLevel);
       } else {
         onAudioLevelChange(0);
       }
     };
+    audioAnimationRef.current = requestAnimationFrame(updateAudioLevel);
+  };
+
+  // Process the Speech Queue
+  const processNextInQueue = () => {
+    if (!ttsEnabled || !window.speechSynthesis) {
+      isPlayingRef.current = false;
+      onAudioLevelChange(0);
+      return;
+    }
+
+    if (speechQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      onAudioLevelChange(0);
+      if (onSpeechEnd) onSpeechEnd();
+      return;
+    }
+
+    isPlayingRef.current = true;
+    const textChunk = speechQueueRef.current.shift();
+    if (!textChunk) {
+      processNextInQueue();
+      return;
+    }
+
+    const cleaned = cleanTtsText(textChunk);
+    if (!cleaned) {
+      processNextInQueue();
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(cleaned);
+    utterance.lang = 'id-ID';
+    utterance.rate = Math.min(1.4, Math.max(0.85, speechRate));
+    utterance.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const indonesianVoice = voices.find(
+      (v) => v.lang.startsWith('id') || v.name.toLowerCase().includes('indonesia')
+    );
+    if (indonesianVoice) {
+      utterance.voice = indonesianVoice;
+    }
 
     utterance.onstart = () => {
-      startTime = Date.now();
-      audioAnimationRef.current = requestAnimationFrame(updateAudioLevel);
+      startAudioOscillation();
     };
 
     utterance.onend = () => {
-      if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
-      onAudioLevelChange(0);
-      if (onSpeechEnd) onSpeechEnd();
+      processNextInQueue();
     };
 
     utterance.onerror = () => {
-      if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
-      onAudioLevelChange(0);
-      if (onSpeechEnd) onSpeechEnd();
+      processNextInQueue();
     };
 
     window.speechSynthesis.speak(utterance);
+  };
+
+  // Handle incoming textToSpeak
+  useEffect(() => {
+    if (!textToSpeak || !ttsEnabled || !window.speechSynthesis) return;
+
+    // Avoid speaking exact same text again if already processed
+    if (textToSpeak === lastSpokenTextRef.current) return;
+    lastSpokenTextRef.current = textToSpeak;
+
+    // Stop current speech, queue new text, and play
+    window.speechSynthesis.cancel();
+    speechQueueRef.current = [];
+
+    // Break into natural sentences for snappier audio delivery
+    const sentences = textToSpeak
+      .split(/(?<=[.?!;:\n])\s+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .slice(0, 4); // Keep to first 3-4 key sentences for quick conversational response
+
+    if (sentences.length > 0) {
+      speechQueueRef.current = sentences;
+      processNextInQueue();
+    }
 
     return () => {
       if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
-      window.speechSynthesis.cancel();
-      onAudioLevelChange(0);
     };
-  }, [textToSpeak, ttsEnabled, onAudioLevelChange, onSpeechEnd]);
+  }, [textToSpeak, ttsEnabled, speechRate]);
 
   const toggleListening = () => {
     if (!speechSupported || !recognitionRef.current || disabled) return;
 
     if (isListening) {
-      recognitionRef.current.stop();
+      // User tapped stop listening -> send whatever was heard immediately
+      if (interimTranscript && interimTranscript !== 'Mendengarkan suara...') {
+        onTranscriptReceived(interimTranscript.trim());
+      }
+      try {
+        recognitionRef.current.stop();
+      } catch {}
       setIsListening(false);
+      setInterimTranscript('');
     } else {
+      // Cancel any ongoing avatar speech when user wants to talk!
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+        speechQueueRef.current = [];
+        isPlayingRef.current = false;
+        onAudioLevelChange(0);
+        if (onStopSpeaking) onStopSpeaking();
+      }
+
       try {
         recognitionRef.current.start();
       } catch (err) {
@@ -163,25 +259,46 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
     }
   };
 
+  const handleInstantCommit = () => {
+    if (interimTranscript && interimTranscript !== 'Mendengarkan suara...') {
+      const text = interimTranscript.trim();
+      try {
+        recognitionRef.current?.stop();
+      } catch {}
+      setIsListening(false);
+      setInterimTranscript('');
+      onTranscriptReceived(text);
+    }
+  };
+
   const toggleTts = () => {
     if (ttsEnabled) {
       window.speechSynthesis?.cancel();
+      speechQueueRef.current = [];
+      isPlayingRef.current = false;
       onAudioLevelChange(0);
     }
     setTtsEnabled(!ttsEnabled);
   };
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2">
       {/* Speech Recognition Button */}
       <button
+        type="button"
         onClick={toggleListening}
         disabled={disabled || !speechSupported}
-        title={speechSupported ? (isListening ? 'Berhenti mendengarkan' : 'Bicara ke JIN (Mikrofon)') : 'Web Speech API tidak didukung browser ini'}
-        className={`relative inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all ${
+        title={
+          speechSupported
+            ? isListening
+              ? 'Klik untuk menyelesaikan bicara dan kirim langsung'
+              : 'Bicara ke JIN (Mikrofon Suara)'
+            : 'Web Speech API tidak didukung di browser ini'
+        }
+        className={`relative inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all shadow-sm ${
           isListening
-            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50 shadow-sm animate-pulse'
-            : 'bg-slate-800 text-slate-200 hover:bg-slate-700 border border-slate-700'
+            ? 'bg-rose-500/25 text-rose-300 border border-rose-500/60 ring-2 ring-rose-500/30 animate-pulse'
+            : 'bg-slate-800 text-slate-200 hover:bg-slate-700 hover:text-cyan-300 border border-slate-700'
         } disabled:opacity-50 disabled:cursor-not-allowed`}
       >
         {isListening ? (
@@ -197,10 +314,24 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
         )}
       </button>
 
+      {/* Instant Send Button while speaking */}
+      {isListening && interimTranscript && interimTranscript !== 'Mendengarkan suara...' && (
+        <button
+          type="button"
+          onClick={handleInstantCommit}
+          title="Kirim kalimat suara ini sekarang juga"
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-colors animate-in fade-in"
+        >
+          <Send className="w-3 h-3" />
+          <span>Kirim</span>
+        </button>
+      )}
+
       {/* TTS Toggle Button */}
       <button
+        type="button"
         onClick={toggleTts}
-        title={ttsEnabled ? 'Matikan Suara Avatar' : 'Aktifkan Suara Avatar'}
+        title={ttsEnabled ? 'Matikan Suara Avatar JIN' : 'Aktifkan Suara Avatar JIN'}
         className={`p-1.5 rounded-lg border transition-all ${
           ttsEnabled
             ? 'bg-slate-800 text-cyan-300 border-slate-700 hover:bg-slate-700'
@@ -210,10 +341,10 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
         {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
       </button>
 
-      {/* Interim Transcript notification if active */}
+      {/* Interim Transcript display */}
       {interimTranscript && (
-        <div className="text-xs font-mono text-cyan-300 bg-cyan-950/80 px-2.5 py-1 rounded border border-cyan-800/60 animate-pulse truncate max-w-[200px]">
-          {interimTranscript}
+        <div className="text-xs font-mono text-cyan-300 bg-cyan-950/90 px-2.5 py-1 rounded-lg border border-cyan-800/80 animate-pulse truncate max-w-[220px]">
+          "{interimTranscript}"
         </div>
       )}
     </div>

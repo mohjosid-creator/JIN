@@ -16,18 +16,36 @@ import { EnterpriseDocsHub } from './components/EnterpriseDocsHub';
 import { AgenticWorkflowHub } from './components/AgenticWorkflowHub';
 import { LocalOfflineRagHub } from './components/LocalOfflineRagHub';
 import { EnterpriseAddonsHub } from './components/EnterpriseAddonsHub';
+import { FloatingControlGear, AppTabType } from './components/FloatingControlGear';
 import { DataAnalysisResult, AvatarState } from './types/jin';
-import { Bot, Layers, Terminal, Database, Sparkles, CheckCircle2, Smartphone, ShieldCheck, Wifi, WifiOff, Cpu, Video, FileText, Network, Search, MoreHorizontal } from 'lucide-react';
+import {
+  Wifi,
+  WifiOff,
+  Settings,
+  Sparkles,
+  ShieldCheck,
+  Activity,
+  Layers,
+  Terminal,
+  Smartphone,
+  Video,
+  FileText,
+  Network,
+  Search,
+  Bot
+} from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<
-    'deck' | 'whatsapp' | 'multimedia' | 'docs' | 'workflows' | 'rag' | 'addons' | 'multiai' | 'avatar' | 'architecture' | 'python' | 'memory'
-  >('deck');
+  const [activeTab, setActiveTab] = useState<AppTabType>('deck');
   const [lastAnalysisResult, setLastAnalysisResult] = useState<DataAnalysisResult | null>(null);
   const [standaloneAvatarState, setStandaloneAvatarState] = useState<AvatarState>('IDLE');
   const [systemHealth, setSystemHealth] = useState<{ status: string; uptime: number } | null>(null);
   const [isOfflineMode, setIsOfflineMode] = useState(false);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [fastStreamingEnabled, setFastStreamingEnabled] = useState(true);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsSpeed, setTtsSpeed] = useState(1.1);
+  const [quickPromptToTrigger, setQuickPromptToTrigger] = useState<string | null>(null);
+  const [clearChatTrigger, setClearChatTrigger] = useState<number>(0);
 
   useEffect(() => {
     fetch('/api/jin/status')
@@ -66,143 +84,88 @@ export default function App() {
     }
   };
 
+  // Human-readable titles for active tab
+  const tabTitles: Record<AppTabType, { name: string; tag: string; icon: any }> = {
+    deck: { name: 'Command Deck', tag: 'AVATAR 3D & CORE AI', icon: Terminal },
+    whatsapp: { name: 'WhatsApp & Meta Hub', tag: 'CLOUD API GATEWAY', icon: Smartphone },
+    multimedia: { name: 'Multimedia Pipeline', tag: 'RUNWAY · ELEVENLABS · MIDJOURNEY', icon: Video },
+    docs: { name: 'Cloud Docs & Sheets', tag: 'GOOGLE WORKSPACE & MS 365', icon: FileText },
+    workflows: { name: 'Workflows (n8n)', tag: 'DISTRIBUTED EVENT BUS', icon: Network },
+    rag: { name: 'Local Offline RAG', tag: 'LANCEDB VECTOR ENGINE', icon: Search },
+    addons: { name: 'Enterprise AI Suite', tag: 'CANVA · SUNO · SAP INTEGRATIONS', icon: Sparkles },
+    multiai: { name: 'Multi-AI Hub', tag: 'OLLAMA ON-PREM & REGISTRY', icon: Bot },
+    avatar: { name: '3D Hologram Avatar', tag: 'THREE.JS 750 QUANTUM PARTICLES', icon: Activity },
+    python: { name: 'Python Worker Workbench', tag: 'analyzer.py PANDAS PIPELINE', icon: Terminal },
+    architecture: { name: 'Architecture Blueprint', tag: 'DISTRIBUTED SYSTEMS SPEC', icon: Layers },
+    memory: { name: 'Vector Memory Inspector', tag: 'PINECONE SEMANTIC STORE', icon: ShieldCheck },
+  };
+
+  const currentTabInfo = tabTitles[activeTab] || tabTitles.deck;
+  const ActiveIcon = currentTabInfo.icon;
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-500/30 selection:text-cyan-200 relative overflow-x-hidden">
       {/* 
-        Top Bar Contract:
-        Zone 1: Brand title, one line
-        Zone 2: Navigation Links, clean single-line tabs
-        Zone 3: Primary Action / Mode Switcher
+        FLOATING DRAGGABLE AUTO-HIDE GEAR BUTTON & UNIFIED MASTER HUD
+        All navigation buttons, view switches, system modes, fast streaming,
+        voice TTS controls, reset and quick prompts are consolidated here!
       */}
-      <header className="sticky top-0 z-50 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-3">
+      <FloatingControlGear
+        activeTab={activeTab}
+        onSelectTab={(tab) => setActiveTab(tab)}
+        isOfflineMode={isOfflineMode}
+        onToggleOfflineMode={handleToggleOfflineMode}
+        onTriggerQuickPrompt={(prompt) => {
+          setActiveTab('deck');
+          setQuickPromptToTrigger(prompt);
+        }}
+        onClearChat={() => setClearChatTrigger(Date.now())}
+        fastStreamingEnabled={fastStreamingEnabled}
+        onToggleFastStreaming={() => setFastStreamingEnabled(!fastStreamingEnabled)}
+        ttsEnabled={ttsEnabled}
+        onToggleTts={() => setTtsEnabled(!ttsEnabled)}
+        ttsSpeed={ttsSpeed}
+        onChangeTtsSpeed={(spd) => setTtsSpeed(spd)}
+      />
+
+      {/* 
+        Sleek Minimal Top Navigation Bar
+        Keeps the viewport clean, futuristic, and distraction-free.
+      */}
+      <header className="sticky top-0 z-40 bg-slate-950/85 backdrop-blur-md border-b border-slate-800/80 px-4 sm:px-6 py-3">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          {/* Zone 1: Brand Wordmark */}
-          <button
-            onClick={() => setActiveTab('deck')}
-            className="flex items-center gap-2 text-left group"
-          >
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
-            <span className="text-base font-bold tracking-tight text-slate-100 group-hover:text-cyan-400 transition-colors">
-              JIN v2.0 Enterprise
-            </span>
-          </button>
-
-          {/* Zone 2: Navigation Links */}
-          <nav className="hidden xl:flex items-center gap-4 text-xs font-medium text-slate-400">
-            <button
-              onClick={() => setActiveTab('deck')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'deck' ? 'text-cyan-400 font-semibold' : ''
-              }`}
-            >
-              Command Deck
-            </button>
-            <button
-              onClick={() => setActiveTab('whatsapp')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'whatsapp' ? 'text-emerald-400 font-semibold' : ''
-              }`}
-            >
-              WhatsApp & Meta
-            </button>
-            <button
-              onClick={() => setActiveTab('multimedia')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'multimedia' ? 'text-rose-400 font-semibold' : ''
-              }`}
-            >
-              Multimedia Pipeline
-            </button>
-            <button
-              onClick={() => setActiveTab('docs')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'docs' ? 'text-emerald-400 font-semibold' : ''
-              }`}
-            >
-              Cloud Docs & Sheets
-            </button>
-            <button
-              onClick={() => setActiveTab('workflows')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'workflows' ? 'text-indigo-400 font-semibold' : ''
-              }`}
-            >
-              Workflows (n8n)
-            </button>
-            <button
-              onClick={() => setActiveTab('rag')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'rag' ? 'text-cyan-400 font-semibold' : ''
-              }`}
-            >
-              Local RAG
-            </button>
-            <button
-              onClick={() => setActiveTab('addons')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'addons' ? 'text-violet-400 font-semibold' : ''
-              }`}
-            >
-              Enterprise AI
-            </button>
-            <button
-              onClick={() => setActiveTab('multiai')}
-              className={`hover:text-slate-100 transition-colors whitespace-nowrap ${
-                activeTab === 'multiai' ? 'text-amber-400 font-semibold' : ''
-              }`}
-            >
-              Multi-AI Hub
-            </button>
-
-            {/* Dropdown for Secondary Tools */}
-            <div className="relative">
-              <button
-                onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-                className="hover:text-slate-100 transition-colors flex items-center gap-1 text-slate-400"
-              >
-                <span>Lainnya</span>
-                <MoreHorizontal className="w-3.5 h-3.5" />
-              </button>
-
-              {moreMenuOpen && (
-                <div
-                  className="absolute right-0 mt-2 w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-xl p-1 z-50 text-xs"
-                  onClick={() => setMoreMenuOpen(false)}
-                >
-                  <button
-                    onClick={() => setActiveTab('avatar')}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-slate-300 hover:text-cyan-400"
-                  >
-                    3D Avatar Visualizer
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('python')}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-slate-300 hover:text-cyan-400"
-                  >
-                    Python analyzer.py
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('architecture')}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-slate-300 hover:text-cyan-400"
-                  >
-                    Architecture Blueprint
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('memory')}
-                    className="w-full text-left px-3 py-2 rounded hover:bg-slate-800 text-slate-300 hover:text-cyan-400"
-                  >
-                    Vector Memory (Pinecone)
-                  </button>
-                </div>
-              )}
-            </div>
-          </nav>
-
-          {/* Zone 3: Primary Action / Mode Switcher */}
+          {/* Brand Wordmark & Owner Badge */}
           <div className="flex items-center gap-3">
             <button
+              onClick={() => setActiveTab('deck')}
+              className="flex items-center gap-2.5 text-left group"
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse shadow-sm shadow-cyan-400" />
+              <span className="text-base font-bold tracking-tight text-slate-100 group-hover:text-cyan-400 transition-colors">
+                JIN v2.0 Enterprise
+              </span>
+            </button>
+            <span className="hidden sm:inline text-slate-700">|</span>
+            <span className="hidden sm:flex items-center gap-1 text-[11px] font-mono text-emerald-400 bg-emerald-950/70 px-2 py-0.5 rounded border border-emerald-800/60">
+              <ShieldCheck className="w-3 h-3" />
+              <span>MAS JOE</span>
+            </span>
+          </div>
+
+          {/* Current Active View Badge */}
+          <div className="flex items-center gap-2 px-3 py-1 bg-slate-900/90 rounded-lg border border-slate-800 text-xs">
+            <ActiveIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span className="font-semibold text-slate-200">{currentTabInfo.name}</span>
+            <span className="hidden md:inline text-[10px] font-mono text-cyan-400 bg-cyan-950/80 px-1.5 py-0.2 rounded border border-cyan-800/50">
+              {currentTabInfo.tag}
+            </span>
+          </div>
+
+          {/* Connection Status & Floating Gear Hint */}
+          <div className="flex items-center gap-2">
+            <button
               onClick={handleToggleOfflineMode}
-              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border transition-colors ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded-lg border transition-colors ${
                 isOfflineMode
                   ? 'bg-amber-950/80 text-amber-300 border-amber-700/80'
                   : 'bg-slate-900 text-slate-300 border-slate-800 hover:text-slate-100'
@@ -223,39 +186,18 @@ export default function App() {
                 </>
               )}
             </button>
+
+            {/* Quick Gear Callout for Discovery */}
+            <div
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-cyan-300 bg-cyan-950/40 border border-cyan-800/40 rounded-lg"
+              title="Semua tombol navigasi, suara, dan kontrol sistem disatukan dalam icon gear melayang"
+            >
+              <Settings className="w-3.5 h-3.5 animate-spin-slow text-cyan-400" />
+              <span>Semua Tombol di Gear ⚙️</span>
+            </div>
           </div>
         </div>
       </header>
-
-      {/* Sub-navigation bar for quick scrolling tabs */}
-      <div className="flex items-center gap-2 bg-slate-900/90 border-b border-slate-800 px-4 py-2 text-xs font-medium text-slate-400 overflow-x-auto no-scrollbar">
-        {[
-          { id: 'deck', label: 'Command Deck' },
-          { id: 'whatsapp', label: 'WhatsApp & Meta' },
-          { id: 'multimedia', label: 'Multimedia Pipeline' },
-          { id: 'docs', label: 'Docs & Sheets' },
-          { id: 'workflows', label: 'Workflows (n8n)' },
-          { id: 'rag', label: 'Local Offline RAG' },
-          { id: 'addons', label: 'Enterprise AI Suite' },
-          { id: 'multiai', label: 'Multi-AI Hub' },
-          { id: 'avatar', label: '3D Avatar' },
-          { id: 'python', label: 'Python Worker' },
-          { id: 'architecture', label: 'Blueprint' },
-          { id: 'memory', label: 'Vector Memory' },
-        ].map((item) => (
-          <button
-            key={item.id}
-            onClick={() => setActiveTab(item.id as any)}
-            className={`px-2.5 py-1 rounded whitespace-nowrap transition-colors ${
-              activeTab === item.id
-                ? 'bg-cyan-950/80 text-cyan-300 font-semibold border border-cyan-800'
-                : 'hover:text-slate-200'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
 
       {/* Main Content Viewport */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
@@ -267,6 +209,15 @@ export default function App() {
             onOpenMultiAiHub={() => setActiveTab('multiai')}
             isOfflineMode={isOfflineMode}
             onToggleOfflineMode={handleToggleOfflineMode}
+            fastStreamingEnabled={fastStreamingEnabled}
+            onToggleFastStreaming={() => setFastStreamingEnabled(!fastStreamingEnabled)}
+            ttsEnabled={ttsEnabled}
+            onToggleTts={() => setTtsEnabled(!ttsEnabled)}
+            ttsSpeed={ttsSpeed}
+            onChangeTtsSpeed={(spd) => setTtsSpeed(spd)}
+            externalPrompt={quickPromptToTrigger}
+            onClearExternalPrompt={() => setQuickPromptToTrigger(null)}
+            clearTrigger={clearChatTrigger}
           />
         )}
 
@@ -347,7 +298,7 @@ export default function App() {
         {activeTab === 'python' && (
           <PythonWorkerWorkbench
             onAnalysisComplete={(res) => setLastAnalysisResult(res)}
-            onSendInsightToChat={(txt) => {
+            onSendInsightToChat={() => {
               setActiveTab('deck');
             }}
           />
@@ -365,13 +316,9 @@ export default function App() {
             <span>Otoritas Pemilik: Mas Joe (@mohjosid)</span>
           </div>
           <div className="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
-            <span>Runway / ElevenLabs / Midjourney</span>
+            <span>Semua Tombol Terpadu di Icon Gear Melayang</span>
             <span>·</span>
-            <span>Google & MS 365</span>
-            <span>·</span>
-            <span>n8n Webhook Bus</span>
-            <span>·</span>
-            <span>LanceDB Local RAG</span>
+            <span>Respon Cepat Voice & Chat Aktif</span>
           </div>
         </div>
       </footer>

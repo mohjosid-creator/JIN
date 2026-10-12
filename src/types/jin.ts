@@ -382,4 +382,43 @@ export interface WebXrSpatialState {
   distanceAttenuation: number;
   floatingPanelsVisible: boolean;
 }
+// 11. Planetary-Scale Heterogeneous Multi-Model Neural Fabric Types
+export type NeuralModelId = 
+  | 'deepseek-v4.1-flash'
+  | 'gemma-4-edge'
+  | 'glm-5.2-miniax'
+  | 'llama-3.3-generative'
+  | 'qwen-2.5-math'
+  | 'gemini-3.8-flash';
 
+export interface NeuralModelSpec {
+  id: NeuralModelId;
+  name: string;
+  specialty: string;
+  provider: 'DeepSeek AI' | 'Google DeepMind' | 'Zhipu GLM' | 'Meta AI' | 'Alibaba Qwen' | 'Google Cloud';
+  roleDescription: string;
+  latencyBudgetMs: number;
+  tokensPerSec: number;
+  status: 'ACTIVE' | 'STANDBY' | 'OFFLINE_READY';
+  weight: number;
+}
+
+export interface NeuralRoutingDecision {
+  query: string;
+  tokenComplexity: number; // 1 - 10
+  domainSpecificity: 'CODE_MATH' | 'FAST_REASONING' | 'EDGE_OFFLINE' | 'MULTILINGUAL_DOCS' | 'CREATIVE_SYNTHESIS' | 'ENTERPRISE_COMMAND';
+  selectedModel: NeuralModelId;
+  fallbackModel: NeuralModelId;
+  consensusModels: NeuralModelId[];
+  latencyBudgetMs: number;
+  reasoning: string;
+  timestamp: string;
+}
+
+export interface AiPowerStatus {
+  state: 'ONLINE' | 'STANDBY' | 'DEACTIVATED';
+  powerAuthorized: boolean;
+  authorizedOwner: string; // 'Mas Joe (@mohjosid)'
+  lastCommand: string;
+  updatedAt: string;
+}

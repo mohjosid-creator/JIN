@@ -16,6 +16,15 @@ interface CommandDeckProps {
   onOpenMultiAiHub?: () => void;
   isOfflineMode?: boolean;
   onToggleOfflineMode?: () => void;
+  fastStreamingEnabled?: boolean;
+  onToggleFastStreaming?: () => void;
+  ttsEnabled?: boolean;
+  onToggleTts?: () => void;
+  ttsSpeed?: number;
+  onChangeTtsSpeed?: (speed: number) => void;
+  externalPrompt?: string | null;
+  onClearExternalPrompt?: () => void;
+  clearTrigger?: number;
 }
 
 export const CommandDeck: React.FC<CommandDeckProps> = ({
@@ -25,6 +34,15 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
   onOpenMultiAiHub,
   isOfflineMode = false,
   onToggleOfflineMode,
+  fastStreamingEnabled = true,
+  onToggleFastStreaming,
+  ttsEnabled = true,
+  onToggleTts,
+  ttsSpeed = 1.1,
+  onChangeTtsSpeed,
+  externalPrompt,
+  onClearExternalPrompt,
+  clearTrigger,
 }) => {
   const [viewMode, setViewMode] = useState<CommandDeckViewMode>('standard_split');
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -80,6 +98,38 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
     scrollToBottom();
   }, [messages, pipelineLogs]);
 
+  // Synchronize fast streaming prop
+  useEffect(() => {
+    if (typeof fastStreamingEnabled === 'boolean') {
+      setUseFastStreaming(fastStreamingEnabled);
+    }
+  }, [fastStreamingEnabled]);
+
+  // Handle external quick prompt from Floating Gear HUD
+  useEffect(() => {
+    if (externalPrompt) {
+      handleSendMessage(externalPrompt);
+      onClearExternalPrompt?.();
+    }
+  }, [externalPrompt]);
+
+  // Handle clear chat signal from Floating Gear HUD
+  useEffect(() => {
+    if (clearTrigger) {
+      setMessages([
+        {
+          id: `init-${Date.now()}`,
+          role: 'agent',
+          text: 'Halo Mas Joe! Riwayat percakapan telah dibersihkan. JIN v2.0 siap menerima instruksi baru.',
+          timestamp: new Date().toLocaleTimeString(),
+          avatarState: 'IDLE',
+          thoughtProcess: 'Sesi di-reset atas perintah Mas Joe.',
+        },
+      ]);
+      setAvatarState('IDLE');
+    }
+  }, [clearTrigger]);
+
   const addLog = (stage: PipelineLog['stage'], message: string, level: PipelineLog['level'] = 'info', durationMs?: number) => {
     setPipelineLogs((prev) => [
       ...prev.slice(-9),
@@ -96,7 +146,15 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
   const handleSendMessage = async (customMessage?: string) => {
     const textToSend = customMessage || inputText;
-    if (!textToSend.trim() || isProcessing) return;
+    if (!textToSend.trim()) return;
+
+    // If an external prompt was dispatched or user sends a new instruction, cancel any ongoing speech
+    if (customMessage) {
+      if (window.speechSynthesis) window.speechSynthesis.cancel();
+      setIsProcessing(false);
+    } else if (isProcessing) {
+      return;
+    }
 
     setInputText('');
     const userMsgId = `user-${Date.now()}`;
@@ -115,6 +173,9 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
 
     setIsProcessing(true);
 
+    const isMasterAuth = textToSend.toLowerCase().includes('tanyabos');
+    const passcodeToSend = isMasterAuth ? 'tanyabos' : undefined;
+
     // Dynamic Avatar Lifecycle: LISTENING -> PROCESSING
     setAvatarState('PROCESSING');
     addLog('GATEWAY', `Menerima instruksi Mas Joe: "${textToSend.slice(0, 42)}..."`, 'info');
@@ -128,7 +189,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
       // FAST STREAMING SSE CLIENT
       // ----------------------------------------------------------------------
       try {
-        addLog('LLM_INFERENCE', 'Membuka streaming real-time ke Gemini 3.8 Flash...', 'info');
+        addLog('LLM_INFERENCE', 'Membuka streaming real-time ke Neural Fabric Router...', 'info');
 
         // Create empty placeholder message for agent
         setMessages((prev) => [
@@ -147,7 +208,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
         const response = await fetch('/api/jin/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: textToSend, offlineMode: isOfflineMode }),
+          body: JSON.stringify({ message: textToSend, offlineMode: isOfflineMode, passcode: passcodeToSend }),
         });
 
         if (!response.ok || !response.body) throw new Error('Streaming connection failed');
@@ -155,6 +216,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulatedText = '';
+        let speechBuffer = '';
+        let hasSpokenFirstSentence = false;
         let isAnalysisTriggered = false;
 
         setAvatarState('SPEAKING');
@@ -173,6 +236,17 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
                 const data = JSON.parse(line.slice(6));
                 if (data.chunk) {
                   accumulatedText += data.chunk;
+                  speechBuffer += data.chunk;
+
+                  // Ultra-fast progressive TTS: speak first sentence immediately when punctuated!
+                  if (!hasSpokenFirstSentence && /[.!?\n]/.test(speechBuffer)) {
+                    const clauses = speechBuffer.split(/(?<=[.!?\n])\s+/);
+                    if (clauses.length > 1 && clauses[0].trim().length > 4) {
+                      hasSpokenFirstSentence = true;
+                      setSpeechText(clauses[0].trim());
+                    }
+                  }
+
                   setMessages((prev) =>
                     prev.map((m) =>
                       m.id === agentMsgId ? { ...m, text: accumulatedText } : m
@@ -192,8 +266,10 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
         const elapsed = Date.now() - startTime;
         addLog('LLM_INFERENCE', `Streaming selesai (${elapsed}ms)`, 'success', elapsed);
 
-        // Vocalize response via TTS
-        setSpeechText(accumulatedText);
+        // Vocalize complete response so subsequent sentences play smoothly
+        if (accumulatedText.trim()) {
+          setSpeechText(accumulatedText.trim());
+        }
 
         // If data analysis triggered, execute background worker
         let analysisData: DataAnalysisResult | undefined = undefined;
@@ -528,7 +604,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               <span>{useFastStreaming ? 'STREAMING AKTIF' : 'MODE SYNC'}</span>
             </button>
 
-            {/* Web Speech Controller */}
+            {/* Web Speech Controller with configurable speech rate */}
             <AudioSpeechController
               onTranscriptReceived={handleVoiceTranscript}
               onAudioLevelChange={setAudioLevel}
@@ -536,6 +612,7 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               textToSpeak={speechText}
               onSpeechEnd={handleSpeechEnd}
               disabled={isProcessing}
+              speechRate={ttsSpeed || 1.1}
             />
           </div>
         </div>
