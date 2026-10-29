@@ -613,6 +613,8 @@ export const CommandDeck: React.FC<CommandDeckProps> = ({
               onSpeechEnd={handleSpeechEnd}
               disabled={isProcessing}
               speechRate={ttsSpeed || 1.1}
+              ttsEnabled={ttsEnabled}
+              onToggleTts={onToggleTts}
             />
           </div>
         </div>
