@@ -4,7 +4,16 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Mic, Volume2, VolumeX, Send, AlertCircle } from 'lucide-react';
+import { Mic, Volume2, VolumeX, Send, AlertCircle, Loader2 } from 'lucide-react';
+import {
+  KOKORO_VOICE,
+  getKokoroIfReady,
+  getKokoroStatus,
+  isLikelyEnglish,
+  loadKokoro,
+  subscribeKokoroStatus,
+  type KokoroStatus,
+} from '../lib/kokoroTts';
 
 interface AudioSpeechControllerProps {
   onTranscriptReceived: (transcript: string) => void;
@@ -78,6 +87,12 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
   const queuedSentenceCountRef = useRef(0);
   const lastSpokenTextRef = useRef('');
   const isPlayingRef = useRef(false);
+  const playTokenRef = useRef(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const kokoroSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const [kokoroStatus, setKokoroStatus] = useState<KokoroStatus>(getKokoroStatus);
+
+  useEffect(() => subscribeKokoroStatus(setKokoroStatus), []);
 
   // Keep latest callbacks/values in refs so long-lived browser handlers never go stale.
   const onTranscriptRef = useRef(onTranscriptReceived);
@@ -214,8 +229,65 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
       window.speechSynthesis.removeEventListener('voiceschanged', loadVoices);
       window.speechSynthesis.cancel();
       if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
+      try {
+        kokoroSourceRef.current?.stop();
+      } catch {}
+      audioCtxRef.current?.close().catch(() => {});
+      audioCtxRef.current = null;
     };
   }, []);
+
+  const getAudioContext = (): AudioContext => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume().catch(() => {});
+    return audioCtxRef.current;
+  };
+
+  // Resolves when playback finishes or is interrupted by a newer play token.
+  const speakWithKokoro = async (text: string, token: number): Promise<boolean> => {
+    const tts = getKokoroIfReady();
+    if (!tts) return false;
+    const speed = Math.min(1.4, Math.max(0.85, speechRateRef.current));
+    const raw = await tts.generate(text, { voice: KOKORO_VOICE as any, speed });
+    if (token !== playTokenRef.current) return true;
+
+    const ctx = getAudioContext();
+    const buffer = ctx.createBuffer(1, raw.audio.length, raw.sampling_rate);
+    buffer.copyToChannel(raw.audio as Float32Array<ArrayBuffer>, 0);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    kokoroSourceRef.current = source;
+
+    const samples = new Uint8Array(analyser.fftSize);
+    let playing = true;
+    const updateLevel = () => {
+      if (!playing) return;
+      analyser.getByteTimeDomainData(samples);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const v = (samples[i] - 128) / 128;
+        sum += v * v;
+      }
+      onAudioLevelRef.current(Math.min(1, Math.sqrt(sum / samples.length) * 4));
+      audioAnimationRef.current = requestAnimationFrame(updateLevel);
+    };
+
+    await new Promise<void>((resolve) => {
+      source.onended = () => {
+        playing = false;
+        if (kokoroSourceRef.current === source) kokoroSourceRef.current = null;
+        onAudioLevelRef.current(0);
+        resolve();
+      };
+      source.start();
+      updateLevel();
+    });
+    return true;
+  };
 
   const pickIndonesianVoice = (): SpeechSynthesisVoice | undefined => {
     const voices = voicesRef.current.length
@@ -246,7 +318,12 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
   };
 
   const stopAllSpeech = () => {
+    playTokenRef.current++;
     window.speechSynthesis?.cancel();
+    try {
+      kokoroSourceRef.current?.stop();
+    } catch {}
+    kokoroSourceRef.current = null;
     speechQueueRef.current = [];
     isPlayingRef.current = false;
     if (audioAnimationRef.current) cancelAnimationFrame(audioAnimationRef.current);
@@ -275,6 +352,34 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
     }
 
     isPlayingRef.current = true;
+
+    if (isLikelyEnglish(cleaned)) {
+      if (getKokoroIfReady()) {
+        const token = playTokenRef.current;
+        speakWithKokoro(cleaned, token)
+          .then((handled) => {
+            if (token !== playTokenRef.current) return;
+            if (handled) processNextInQueue();
+            else speakWithBrowser(cleaned);
+          })
+          .catch((err) => {
+            console.warn('Kokoro TTS playback failed, using browser voice:', err);
+            if (token === playTokenRef.current) speakWithBrowser(cleaned);
+          });
+        return;
+      }
+      // Model downloads in the background; the browser voice covers this sentence meanwhile.
+      loadKokoro();
+    }
+
+    speakWithBrowser(cleaned);
+  };
+
+  const speakWithBrowser = (cleaned: string) => {
+    if (!window.speechSynthesis) {
+      processNextInQueue();
+      return;
+    }
     const utterance = new SpeechSynthesisUtterance(cleaned);
     utterance.lang = 'id-ID';
     utterance.rate = Math.min(1.4, Math.max(0.85, speechRateRef.current));
@@ -413,6 +518,17 @@ export const AudioSpeechController: React.FC<AudioSpeechControllerProps> = ({
       >
         {ttsEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
       </button>
+
+      {kokoroStatus === 'loading' && (
+        <span
+          role="status"
+          className="inline-flex items-center gap-1 text-[11px] text-slate-400"
+          title="Mengunduh model suara Kokoro untuk teks Bahasa Inggris"
+        >
+          <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+          Memuat Kokoro...
+        </span>
+      )}
 
       {isListening && (
         <div
